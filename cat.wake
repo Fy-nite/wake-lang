@@ -1,0 +1,6 @@
+void meow()
+    {
+        db($500, "meow\n")
+        call("printf")
+        ret()
+    }

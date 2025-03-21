@@ -1,0 +1,22 @@
+// Main program using includes
+
+// Include standard utilities
+//#include "utils.wake"
+
+// Masm-specific includes (passed through to the masm compiler)
+
+
+void main() {
+    db($100, "Hello from main program!");
+    
+    // Call functions defined in the included file
+    call("printMessage");
+    
+    // Define a message
+    mov(RAX, $100);
+    
+    // Use a function from included file
+    call("print");
+    
+    hlt();
+}

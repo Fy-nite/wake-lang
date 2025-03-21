@@ -1,0 +1,12 @@
+// Utility functions for Wake examples
+
+void printMessage() {
+    db($200, "This is a message from the included file!");
+    mov(RAX, $200);
+    out(1, RAX);
+}
+
+void print() {
+    // Print the string at address in RAX
+    out(1, RAX);
+}

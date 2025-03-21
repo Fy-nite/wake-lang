@@ -1,0 +1,7 @@
+// Simple test to ensure the main function appears in output
+
+void main() {
+    db($100, "Testing main function output");
+    out(1, $100);
+    hlt();
+}

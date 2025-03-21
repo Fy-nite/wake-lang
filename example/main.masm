@@ -1,0 +1,6 @@
+LBL main
+DB $100 "Hello from main program!"
+CALL #"printMessage"
+MOV RAX $100
+CALL #"print"
+HLT

@@ -1,0 +1,4 @@
+LBL meow
+DB $500 "meow\n"
+CALL #"printf"
+RET

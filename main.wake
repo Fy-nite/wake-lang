@@ -1,0 +1,14 @@
+// includes from wake can be done as follows
+// #include "something.wake"
+// masm includes can be done as 
+// #M_include "stdio.print"
+// with #M_include, just turn them into #includes without any processing
+#include "cat.wake"
+void main()
+{
+    mov(RAX,1)
+    mov(RBX,100)
+    db($100,"Hello world")
+    call("printf") // turns into `call #printf` because of how call works
+    hlt()
+}
