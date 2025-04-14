@@ -1,4 +1,12 @@
+#include "stdio.print"
 LBL meow
-DB $500 "meow\n"
-CALL #"printf"
+    DB $500 "meow\n"
+    CALL #"printf"
 RET
+
+LBL main
+    MOV RAX 1
+    MOV RBX 100
+    DB $100 "Hello world"
+    CALL #"printf"
+HLT

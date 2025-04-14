@@ -202,65 +202,88 @@ class FileLoader:
             return file.read()
     
     def process_includes(self, file_path: str) -> List[Token]:
-        """Process includes recursively, but preserve main file's tokens"""
-        main_file_path = os.path.abspath(file_path)  # Keep track of the initial file
-        
-        def process_file(file_path: str, is_main: bool = False) -> List[Token]:
-            abs_path = os.path.abspath(file_path)
-            
-            # Skip if already processed (avoid circular includes)
-            if abs_path in self.loaded_files and not is_main:
+        """Process includes recursively, combining tokens correctly."""
+        main_file_path = os.path.abspath(file_path)
+        main_eof_token = None # To store the main file's EOF token info
+
+        # Inner function to process a single file and its includes
+        def process_file(current_file_path: str, is_main_file: bool = False) -> List[Token]:
+            nonlocal main_eof_token
+            abs_path = os.path.abspath(current_file_path)
+
+            # Avoid circular includes, but always process the main file once
+            if abs_path in self.loaded_files and not is_main_file:
                 return []
-            
             self.loaded_files.add(abs_path)
-            
+
             try:
                 source = self.load_file(abs_path)
                 lexer = Lexer(source, abs_path)
-                tokens = lexer.tokenize()
-                
+                tokens = lexer.tokenize() # Tokenize the current file (includes its EOF)
+
+                # If this is the main file being processed, capture its EOF token
+                if is_main_file and tokens and tokens[-1].type == TokenType.EOF:
+                    main_eof_token = tokens[-1]
+
                 result_tokens = []
                 i = 0
-                
+                # Iterate through tokens, excluding the last one (EOF)
                 while i < len(tokens):
                     token = tokens[i]
-                    
+
+                    # Stop if we hit the EOF token for this specific file
+                    if token.type == TokenType.EOF:
+                        break
+
                     if token.type == TokenType.INCLUDE:
-                        # Must be followed by a string token
+                        # Expect a string token after include directive
                         if i + 1 < len(tokens) and tokens[i + 1].type == TokenType.STRING:
                             include_value = tokens[i + 1].value.strip('"')
                             try:
                                 include_path = self.resolve_include_path(include_value, abs_path)
-                                
-                                # For regular #include, process and add included tokens
+
+                                # For regular #include, recursively process and extend tokens
                                 if token.value == '#include':
-                                    included_tokens = process_file(include_path)
+                                    # Process the included file (not as the main file)
+                                    included_tokens = process_file(include_path, False)
                                     result_tokens.extend(included_tokens)
-                                # For #M_include, keep as is
+                                # For #M_include, keep the directive and path as tokens
                                 else:
                                     result_tokens.append(token)
                                     result_tokens.append(tokens[i + 1])
+
                             except FileNotFoundError as e:
                                 print(f"Warning: {e} included from {abs_path} line {token.line}")
+                                # Keep the include directive even if file not found, maybe handled later
                                 result_tokens.append(token)
                                 result_tokens.append(tokens[i + 1])
-                            i += 2  # Skip the include directive and string
+
+                            i += 2 # Move past the include directive and string path
                         else:
                             raise SyntaxError(f"Expected string after include directive at {abs_path} line {token.line}")
                     else:
-                        # Always include the token
+                        # Add any other token to the result list
                         result_tokens.append(token)
                         i += 1
-                
-                return result_tokens
-                
+
+                return result_tokens # Return the list of tokens for this file (without its EOF)
+
             except Exception as e:
-                print(f"Error processing file {file_path}: {str(e)}")
+                print(f"Error processing file {current_file_path}: {str(e)}")
                 raise
-        
-        # Start processing from the main file (marked as main)
-        self.loaded_files = set()  # Reset loaded files tracking
-        return process_file(main_file_path, is_main=True)
+
+        # Start processing from the main file
+        self.loaded_files = set() # Reset loaded files for this compilation run
+        final_tokens = process_file(main_file_path, is_main_file=True)
+
+        # Append the single, final EOF token from the main file
+        if main_eof_token:
+            final_tokens.append(main_eof_token)
+        else:
+            # Fallback: create a default EOF if the main file was empty or failed processing
+            final_tokens.append(Token(TokenType.EOF, "", 1, main_file_path))
+
+        return final_tokens
 
 # AST node types
 class NodeType(Enum):
@@ -311,12 +334,26 @@ class Parser:
         program = Node(NodeType.PROGRAM)
         
         while not self.is_at_end():
-            if self.match(TokenType.INCLUDE):
-                program.children.append(self.parse_include())
+            node = None # Initialize node for this iteration
+            if self.check(TokenType.INCLUDE):
+                 # Advance past the INCLUDE token before calling parse_include
+                self.advance() 
+                node = self.parse_include()
             elif self.match(TokenType.FUNCTION):
-                program.children.append(self.parse_function())
+                node = self.parse_function()
             else:
-                self.advance()  # Skip unrecognized tokens
+                # Skip unrecognized tokens or handle errors
+                token = self.peek()
+                # Avoid infinite loop on unexpected token at EOF
+                if token.type != TokenType.EOF:
+                     print(f"Warning: Skipping unexpected token '{token.value}' ({token.type}) at line {token.line} in {token.source_file}")
+                     self.advance()
+                else:
+                     break # Stop if only EOF is left
+
+            # Add the parsed node to the program if it's not None
+            if node:
+                program.children.append(node)
         
         return program
         
@@ -378,8 +415,23 @@ class Parser:
             return ""
 
     def parse_include(self) -> Node:
-        include_node = Node(NodeType.INCLUDE, value=self.previous().value)
-        return include_node
+        # Get the include token (#M_include or #include)
+        include_token = self.previous()
+        # Expect a string token immediately after
+        path_token = self.consume(TokenType.STRING, f"Expected string path after '{include_token.value}'")
+        
+        # Only create Include nodes for #M_include, as #include content is already merged
+        if include_token.value == '#M_include':
+             # Store both the directive and the path, maybe useful later
+            return Node(NodeType.INCLUDE, value={'directive': include_token.value, 'path': path_token.value})
+        else:
+            # For regular #include, the tokens are already in the stream,
+            # so we don't need a specific node. We just consumed the tokens.
+            # Return None or a special marker if needed, but skipping seems fine.
+            # However, the current parse loop expects a node. Let's return a dummy node
+            # or adjust the main parse loop. For now, let's skip adding it to the AST.
+            # We need to adjust the main parse loop in parse()
+            return None # Indicate no node should be added for #include
 
     def parse_function(self) -> Node:
         # Parse function name
@@ -673,80 +725,92 @@ class CodeGenerator:
         output = []
         
         for node in ast.children:
+            # Handle #M_include nodes specifically if needed, e.g., pass them through
             if node.type == NodeType.INCLUDE:
-                output.append(node.value)
+                 # Assuming #M_include means pass the directive and path literally
+                 #(charlie) yes it does. just replace the M_ with nothing and you got a masm include, oh and keep the # and quotes
+                 # The path might still have quotes, strip them if needed by assembler
+                #  output.append(f"{node.value['directive']} {node.value['path']}")
+                output.append(f"#include {node.value['path']}")
             elif node.type == NodeType.FUNCTION:
                 output.extend(self.generate_function(node))
+            # Add handling for other top-level nodes if any are introduced later
         
         return '\n'.join(output)
 
     def generate_function(self, function_node: Node) -> List[str]:
         output = []
-        
-        # Generate function header
+        indent_level = 1  # Track the current indentation level
+
+        def indent_line(line: str) -> str:
+            """Apply indentation to a line based on the current level."""
+            return '    ' * indent_level + line
+
+        # Generate function header (no indentation for labels)
         output.append(f"LBL {function_node.value}")
-        
+
         # Generate function body
         for statement in function_node.children:
             if statement.type == NodeType.MOV:
-                output.append(f"MOV {statement.value['dest']} {statement.value['src']}")
+                output.append(indent_line(f"MOV {statement.value['dest']} {statement.value['src']}"))
             elif statement.type == NodeType.DB:
-                output.append(f"DB ${statement.value['address']} {statement.value['string']}")
+                output.append(indent_line(f"DB ${statement.value['address']} {statement.value['string']}"))
             elif statement.type == NodeType.CALL:
-                output.append(f"CALL #{statement.value}")
+                output.append(indent_line(f"CALL #{statement.value}"))
             elif statement.type == NodeType.HLT:
-                output.append("HLT")
+                # HLT should not be indented
+                output.append(f"HLT")
             elif statement.type == NodeType.RET:
-                output.append("RET")
-            # Generate new instruction types
+                # RET should not be indented
+                output.append(f"RET")
             elif statement.type == NodeType.ADD:
-                output.append(f"ADD {statement.value['dest']} {statement.value['src']}")
+                output.append(indent_line(f"ADD {statement.value['dest']} {statement.value['src']}"))
             elif statement.type == NodeType.SUB:
-                output.append(f"SUB {statement.value['dest']} {statement.value['src']}")
+                output.append(indent_line(f"SUB {statement.value['dest']} {statement.value['src']}"))
             elif statement.type == NodeType.MUL:
-                output.append(f"MUL {statement.value['dest']} {statement.value['src']}")
+                output.append(indent_line(f"MUL {statement.value['dest']} {statement.value['src']}"))
             elif statement.type == NodeType.DIV:
-                output.append(f"DIV {statement.value['dest']} {statement.value['src']}")
+                output.append(indent_line(f"DIV {statement.value['dest']} {statement.value['src']}"))
             elif statement.type == NodeType.INC:
-                output.append(f"INC {statement.value}")
+                output.append(indent_line(f"INC {statement.value}"))
             elif statement.type == NodeType.JMP:
-                output.append(f"JMP #{statement.value}")
+                output.append(indent_line(f"JMP #{statement.value}"))
             elif statement.type == NodeType.CMP:
-                output.append(f"CMP {statement.value['dest']} {statement.value['src']}")
+                output.append(indent_line(f"CMP {statement.value['dest']} {statement.value['src']}"))
             elif statement.type == NodeType.JE:
-                output.append(f"JE #{statement.value['true']} #{statement.value['false']}")
+                output.append(indent_line(f"JE #{statement.value['true']} #{statement.value['false']}"))
             elif statement.type == NodeType.JNE:
-                output.append(f"JNE #{statement.value['true']} #{statement.value['false']}")
+                output.append(indent_line(f"JNE #{statement.value['true']} #{statement.value['false']}"))
             elif statement.type == NodeType.JL:
-                output.append(f"JL #{statement.value['true']} #{statement.value['false']}")
+                output.append(indent_line(f"JL #{statement.value['true']} #{statement.value['false']}"))
             elif statement.type == NodeType.JG:
-                output.append(f"JG #{statement.value['true']} #{statement.value['false']}")
+                output.append(indent_line(f"JG #{statement.value['true']} #{statement.value['false']}"))
             elif statement.type == NodeType.PUSH:
-                output.append(f"PUSH {statement.value}")
+                output.append(indent_line(f"PUSH {statement.value}"))
             elif statement.type == NodeType.POP:
-                output.append(f"POP {statement.value}")
+                output.append(indent_line(f"POP {statement.value}"))
             elif statement.type == NodeType.OUT:
-                output.append(f"OUT {statement.value['port']} {statement.value['value']}")
+                output.append(indent_line(f"OUT {statement.value['port']} {statement.value['value']}"))
             elif statement.type == NodeType.COUT:
-                output.append(f"COUT {statement.value['port']} {statement.value['value']}")
+                output.append(indent_line(f"COUT {statement.value['port']} {statement.value['value']}"))
             elif statement.type == NodeType.EXIT:
-                output.append(f"EXIT {statement.value}")
+                output.append(indent_line(f"EXIT {statement.value}"))
             elif statement.type == NodeType.AND:
-                output.append(f"AND {statement.value['dest']} {statement.value['src']}")
+                output.append(indent_line(f"AND {statement.value['dest']} {statement.value['src']}"))
             elif statement.type == NodeType.OR:
-                output.append(f"OR {statement.value['dest']} {statement.value['src']}")
+                output.append(indent_line(f"OR {statement.value['dest']} {statement.value['src']}"))
             elif statement.type == NodeType.XOR:
-                output.append(f"XOR {statement.value['dest']} {statement.value['src']}")
+                output.append(indent_line(f"XOR {statement.value['dest']} {statement.value['src']}"))
             elif statement.type == NodeType.NOT:
-                output.append(f"NOT {statement.value}")
+                output.append(indent_line(f"NOT {statement.value}"))
             elif statement.type == NodeType.SHL:
-                output.append(f"SHL {statement.value['dest']} {statement.value['src']}")
+                output.append(indent_line(f"SHL {statement.value['dest']} {statement.value['src']}"))
             elif statement.type == NodeType.SHR:
-                output.append(f"SHR {statement.value['dest']} {statement.value['src']}")
-                
+                output.append(indent_line(f"SHR {statement.value['dest']} {statement.value['src']}"))
+
         # Add a newline after each function
         output.append("")
-        
+
         return output
 
 # Update compile_wake_to_masm to use the AST-based approach with include handling
