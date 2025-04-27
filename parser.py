@@ -56,6 +56,9 @@ class Parser:
                 node = self.parse_include()
             elif self.match(TokenType.FUNCTION):
                 node = self.parse_function()
+                # Validate the function node after parsing
+                if node:
+                    self.validate_function_node(node)
             else:
                 # Skip unrecognized tokens or handle errors
                 token = self.peek()
@@ -242,6 +245,18 @@ class Parser:
         self.consume(TokenType.RIGHT_BRACE, "Expected '}' after function body")
         
         return function_node
+
+    def validate_function_node(self, function_node: Node):
+        """Check if the function node is well-formed, else raise SyntaxError."""
+        # Check for valid function name
+        if not function_node.value or not isinstance(function_node.value, str):
+            raise SyntaxError("Malformed function: missing or invalid function name.")
+        # Check for at least one statement in the function body
+        if not hasattr(function_node, "children") or not isinstance(function_node.children, list):
+            raise SyntaxError(f"Malformed function '{function_node.value}': missing function body.")
+        # Optionally, require at least one statement (uncomment if desired)
+        # if len(function_node.children) == 0:
+        #     raise SyntaxError(f"Malformed function '{function_node.value}': function body is empty.")
 
     def parse_mov_statement(self) -> Node:
         self.consume(TokenType.LEFT_PAREN, "Expected '(' after 'mov'")
