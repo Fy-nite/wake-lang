@@ -1,0 +1,44 @@
+// example/arithmetic_control_flow.wake
+// Demonstrates arithmetic and control flow instructions
+
+void main() {
+    mov(RAX, 10);      // Initialize RAX with 10
+    mov(RBX, 5);       // Initialize RBX with 5
+    
+    add(RAX, RBX);     // RAX = RAX + RBX (10 + 5 = 15)
+    out(1, RAX);       // Output the result (15)
+    
+    sub(RAX, 3);       // RAX = RAX - 3 (15 - 3 = 12)
+    out(1, RAX);       // Output the result (12)
+    
+    inc(RBX);          // RBX = RBX + 1 (5 + 1 = 6)
+    out(1, RBX);       // Output the result (6)
+    
+    // Compare RAX and RBX (12 vs 6)
+    cmp(RAX, RBX);
+    
+    // Jump based on comparison
+    je("equal_label", "not_equal_label"); // If equal, jump to equal_label, else to not_equal_label
+    
+    // This part is skipped if the jump occurs
+    db($300, "Should not see this if jump happens");
+    out(1, $300);
+    
+    jmp("end_program"); // Unconditionally jump to the end
+}
+
+void equal_label() {
+    db($100, "Values were equal.");
+    out(1, $100);
+    jmp("end_program"); // Jump to the end after handling
+}
+
+void not_equal_label() {
+    db($200, "Values were not equal.");
+    out(1, $200);
+    // No jump needed, execution flows to end_program
+}
+
+void end_program() {
+    hlt(); // Halt the program
+}

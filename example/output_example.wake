@@ -1,0 +1,30 @@
+// example/output_example.wake
+// Demonstrates the use of the 'out' instruction
+
+void main() {
+    // Define a string message
+    db($100, "Hello from Wake!"); 
+    
+    // Move the address of the string into RAX
+    mov(RAX, $100);
+    
+    // Output the string (address in RAX) to stdout (port 1)
+    out(1, RAX); 
+    
+    // Move a number into RBX
+    mov(RBX, 42);
+    
+    // Output the number in RBX to stdout (port 1)
+    // Note: MicroASM's OUT might treat this as an address if not handled correctly by the interpreter.
+    // This example assumes the interpreter can print numeric register values directly.
+    out(1, RBX); 
+    
+    // Define another string for stderr
+    db($200, "This is an error message.");
+    mov(RCX, $200);
+    
+    // Output the error string to stderr (port 2)
+    out(2, RCX);
+    
+    hlt();
+}

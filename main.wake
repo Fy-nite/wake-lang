@@ -3,7 +3,7 @@
 // masm includes can be done as 
 #M_include "stdio.print"
 // with #M_include, just turn them into #includes without any processing
-#include "cat.wake"
+
 void main()
 {
     mov(RAX,1)

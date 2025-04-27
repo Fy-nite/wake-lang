@@ -3,6 +3,7 @@
 import re
 import os
 import sys
+import argparse # Add argparse import
 from enum import Enum, auto
 from typing import List, Optional, Union, Dict, Any, Set
 
@@ -701,26 +702,25 @@ class Parser:
     def parse_out_instruction(self, node_type: NodeType) -> Node:
         self.consume(TokenType.LEFT_PAREN, f"Expected '(' after output instruction")
         
+        # Expect the first argument (port number or identifier) - should be NUMBER or IDENTIFIER
         if not self.match(TokenType.NUMBER) and not self.match(TokenType.IDENTIFIER):
-            raise SyntaxError(f"Expected port number at line {self.peek().line}")
-        
-        port = self.previous().value
+            raise SyntaxError(f"Expected first argument (port number/identifier) at line {self.peek().line}")
+        arg1 = self.previous().value
         
         self.consume(TokenType.COMMA, "Expected ',' between output arguments")
         
-        if not self.match(TokenType.IDENTIFIER) and not self.match(TokenType.NUMBER) and not self.match(TokenType.STRING):
-            raise SyntaxError(f"Expected output value at line {self.peek().line}")
-        
-        value = self.previous().value
-        if value.startswith('"') and value .endswith('"'):
-            value = value[1:-1]
+        # Expect the second argument (register/identifier/address) - should be an IDENTIFIER
+        if not self.match(TokenType.IDENTIFIER):
+            raise SyntaxError(f"Expected second argument (register/identifier/address) at line {self.peek().line}")
+        arg2 = self.previous().value
         
         self.consume(TokenType.RIGHT_PAREN, "Expected ')' after output arguments")
         
         # Skip optional semicolon after statement
         self.match(TokenType.SEMICOLON)
         
-        return Node(node_type, value={"port": port, "value": value})
+        # Store arguments as arg1 and arg2
+        return Node(node_type, value={"arg1": arg1, "arg2": arg2})
 
 class CodeGenerator:
     def generate(self, ast: Node) -> str:
@@ -816,7 +816,7 @@ class CodeGenerator:
         return output
 
 # Update compile_wake_to_masm to use the AST-based approach with include handling
-def compile_wake_to_masm(input_file, output_file):
+def compile_wake_to_masm(input_file, output_file, verbose=False): # Add verbose parameter
     try:
         print(f"Compiling {input_file} to {output_file}")
         
@@ -833,28 +833,30 @@ def compile_wake_to_masm(input_file, output_file):
         # Process all includes and collect tokens
         tokens = file_loader.process_includes(input_file)
         
-        # Debug output to check tokens
-        print(f"Total tokens processed: {len(tokens)}")
-        function_tokens = [t for t in tokens if t.type == TokenType.FUNCTION]
-        print(f"Function declarations found: {len(function_tokens)}")
-        
-        # Show all function tokens and their source files
-        for ft in function_tokens:
-            idx = tokens.index(ft)
-            if idx + 1 < len(tokens) and tokens[idx+1].type == TokenType.IDENTIFIER:
-                func_name = tokens[idx+1].value
-                source_file = ft.source_file
-                print(f"Found function: {func_name} from {source_file}")
+        # Debug output to check tokens (conditional)
+        if verbose:
+            print(f"Total tokens processed: {len(tokens)}")
+            function_tokens = [t for t in tokens if t.type == TokenType.FUNCTION]
+            print(f"Function declarations found: {len(function_tokens)}")
+            
+            # Show all function tokens and their source files
+            for ft in function_tokens:
+                idx = tokens.index(ft)
+                if idx + 1 < len(tokens) and tokens[idx+1].type == TokenType.IDENTIFIER:
+                    func_name = tokens[idx+1].value
+                    source_file = ft.source_file
+                    print(f"Found function: {func_name} from {source_file}")
         
         # Parse tokens into AST
         parser = Parser(tokens)
         ast = parser.parse()
         
-        # Debug AST
-        function_nodes = [node for node in ast.children if node.type == NodeType.FUNCTION]
-        print(f"Function nodes in AST: {len(function_nodes)}")
-        for fn in function_nodes:
-            print(f"Function in AST: {fn.value}")
+        # Debug AST (conditional)
+        if verbose:
+            function_nodes = [node for node in ast.children if node.type == NodeType.FUNCTION]
+            print(f"Function nodes in AST: {len(function_nodes)}")
+            for fn in function_nodes:
+                print(f"Function in AST: {fn.value}")
         
         # Generate MASM code
         generator = CodeGenerator()
@@ -879,57 +881,65 @@ def compile_wake_to_masm(input_file, output_file):
         traceback.print_exc()
         return False
 
-def print_usage():
-    print("Usage: python compiler.py [input_file.wake] [-o output_file.masm]")
-    print("  If input_file is not specified, defaults to main.wake")
-    print("  If output_file is not specified, defaults to main.masm or input_file with .masm extension")
 
 def main():
     # Default paths using os.path for proper path handling
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    default_input = os.path.join(base_dir, "main.wake")
-    default_output = os.path.join(base_dir, "main.masm")
-    
-    input_file = default_input
-    output_file = None
-    
-    # Parse command line arguments
-    i = 1
-    while i < len(sys.argv):
-        if sys.argv[i] == '-o' and i + 1 < len(sys.argv):
-            output_file = os.path.normpath(sys.argv[i + 1])
-            i += 2
-        elif sys.argv[i] == '-h' or sys.argv[i] == '--help':
-            print_usage()
-            return
-        else:
-            input_file = os.path.normpath(sys.argv[i])
-            i += 1
-    
-    # Make sure input file exists
+    # Remove default_input as it's no longer used for defaulting
+    # default_input = os.path.join(base_dir, "main.wake")
+    default_output_base = "main" # Base name for default output if input has no extension
+
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description="Compile Wake language files to Masm.")
+    # Make input_file a required positional argument
+    parser.add_argument('input_file',
+                        help="The input .wake file")
+    parser.add_argument('-o', '--output', dest='output_file', default=None,
+                        help="The output .masm file (defaults to input filename with .masm extension)")
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help="Enable verbose output for debugging")
+
+    args = parser.parse_args()
+
+    input_file = os.path.normpath(args.input_file)
+    output_file = args.output_file
+    verbose = args.verbose # Get verbose flag
+
+    # Make sure input file exists (keep this check for a clear error)
     if not os.path.exists(input_file):
-        print(f"Error: Input file '{input_file}' not found")
-        return False
-    
-    # If output file not specified, default to input filename with .masm extension
+        # Use parser's error handling
+        parser.error(f"Input file '{input_file}' not found")
+
+    # If output file not specified, default based on input filename
     if output_file is None:
-        if input_file.lower().endswith('.wake'):
-            output_file = input_file[:-5] + '.masm'
+        input_basename = os.path.basename(input_file)
+        # Determine output directory (same as input file)
+        output_dir_default = os.path.dirname(input_file)
+        if input_basename.lower().endswith('.wake'):
+            output_basename = input_basename[:-5] + '.masm'
         else:
-            output_file = default_output
-    
+            # If input doesn't end with .wake, use its name + .masm
+            output_basename = input_basename + '.masm'
+        # Place output in the same directory as input by default
+        output_file = os.path.join(output_dir_default, output_basename)
+    else:
+        output_file = os.path.normpath(output_file)
+
     # Ensure the output directory exists
     output_dir = os.path.dirname(output_file)
     if output_dir and not os.path.exists(output_dir):
         try:
             os.makedirs(output_dir)
-            print(f"Created output directory: {output_dir}")
+            if verbose: # Conditional print
+                print(f"Created output directory: {output_dir}")
         except OSError as e:
-            print(f"Error creating output directory: {str(e)}")
-            return False
-    
-    # Compile the file
-    return compile_wake_to_masm(input_file, output_file)
+            parser.error(f"Error creating output directory '{output_dir}': {str(e)}")
+
+    # Compile the file, passing the verbose flag
+    success = compile_wake_to_masm(input_file, output_file, verbose)
+
+    # Exit with appropriate status code
+    sys.exit(0 if success else 1)
 
 if __name__ == "__main__":
     main()
